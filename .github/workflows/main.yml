@@ -1,43 +1,41 @@
-name: Xposed Module Build
+name: Xposed Module CI
 
 on:
+  workflow_dispatch:  # 手动触发
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    tags: v*         # 打标签时自动发布
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-      # 1. 克隆仓库及子模块
-      - name: Clone repository with submodules
-        uses: actions/checkout@v4
+      # 1. 克隆代码（含子模块）
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0  # 获取完整历史记录（某些子模块可能需要）
 
-      # 2. 设置 JDK 21（Xposed 模块推荐）
-      - name: Set up JDK 21
+      # 2. 设置JDK 17
+      - name: Set up JDK
         uses: actions/setup-java@v3
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
 
-      # 3. 授予 Gradle Wrapper 执行权限
-      - name: Make Gradlew executable
-        run: chmod +x gradlew
+      # 3. 构建APK（仅生成调试版）
+      - name: Build Debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
 
-      # 4. 构建项目（使用项目指定的 dist 任务）
-      - name: Build with Gradle
-        run: ./gradlew dist
-
-      # 5. 上传构建产物
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v3
+      # 4. 发布未签名APK
+      - name: Upload Debug APK
+        uses: softprops/action-gh-release@v1
         with:
-          name: xposed-module
-          path: |
-            build/distributions/*
-            build/libs/*
+          files: app/build/outputs/apk/debug/app-debug.apk
+          draft: false
+          body: |
+            ⚠️ 注意：这是由GitHubAction编译 并没受到官方认可 
+            - 原项目: BillRoamingX
+            - 构建日期: ${{ steps.date.outputs.date }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 自动使用GitHub内置token
