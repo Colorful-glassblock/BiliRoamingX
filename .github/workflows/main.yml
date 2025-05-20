@@ -1,70 +1,93 @@
-name: BiliRoamingX Build and Release
+name: BiliRoamingX Sync and Build
 
 on:
   workflow_dispatch:  # 手动触发
-  push:
-    tags: v*         # 打标签时自动发布
+  pull_request:
+    types: [closed]   # PR合并后触发
+    branches: [main]  # 仅main分支的PR
 
 jobs:
-  build-and-release:
+  check-sync:
+    if: github.event.pull_request.merged == true  # 只在PR合并时运行
     runs-on: ubuntu-latest
-    environment: production
+    outputs:
+      is_sync: ${{ steps.check-commit.outputs.is_sync }}
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整提交历史
+      
+      - name: Check if sync commit
+        id: check-commit
+        run: |
+          # 检查提交信息是否包含"sync"或"上游"
+          if [[ "${{ github.event.pull_request.title }}" =~ (sync|上游) ]]; then
+            echo "is_sync=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_sync=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-release:
+    needs: check-sync
+    if: needs.check-sync.outputs.is_sync == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
     
     steps:
       # 1. 克隆代码（含子模块）
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
 
-      # 2. 设置JDK 21（兼容性更好）
+      # 2. 设置构建环境
       - name: Set up JDK 21
         uses: actions/setup-java@v3
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 3. 设置Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # 4. 构建Release版本
+      # 3. 构建Release版本
       - name: Build Release APK
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease
           
-      # 5. 获取构建信息
+      # 4. 获取构建信息
       - name: Get build info
         id: build-info
         run: |
           APK_PATH=$(find . -path '*/release/*.apk' | head -1)
           echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
           echo "version=$(./gradlew -q printVersion)" >> $GITHUB_OUTPUT
+          echo "commit_sha=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           
-      # 6. 发布到Releases
+      # 5. 发布到Releases
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          release_name: "BiliRoamingX ${{ steps.build-info.outputs.version }}"
+          tag_name: "auto-build-${{ steps.build-info.outputs.commit_sha }}"
+          release_name: "BiliRoamingX Sync Build (${{ steps.build-info.outputs.version }})"
           body: |
-            ⚠️ 非官方构建警告 ⚠️
-            ======================
-            此版本由GitHub Actions自动构建，非官方发布版本！
+            ⚠️ 非官方自动构建警告 ⚠️
+            ========================
+            此版本由上游同步触发自动构建，非官方发布版本！
             
+            🔄 同步来源: ${{ github.event.pull_request.title || '手动触发' }}
             📅 构建日期: ${{ steps.get-date.outputs.date }}
             🔖 提交哈希: ${{ github.sha }}
-            🏷️ 标签版本: ${{ github.ref_name }}
+            🏷️ 版本: ${{ steps.build-info.outputs.version }}
             
             ℹ️ 原项目地址: https://github.com/BiliRoamingX/BiliRoamingX
           files: ${{ steps.build-info.outputs.apk_path }}
           draft: false
-          prerelease: false
+          prerelease: true  # 标记为预发布版本
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
 
-      # 7. 获取当前日期
       - name: Get current date
         id: get-date
         run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
