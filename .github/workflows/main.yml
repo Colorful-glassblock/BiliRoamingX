@@ -1,4 +1,4 @@
-name: Xposed Module CI
+name: BiliRoamingX Build and Release
 
 on:
   workflow_dispatch:  # 手动触发
@@ -6,36 +6,65 @@ on:
     tags: v*         # 打标签时自动发布
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-latest
+    environment: production
+    
     steps:
       # 1. 克隆代码（含子模块）
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
-      # 2. 设置JDK 17
-      - name: Set up JDK
+      # 2. 设置JDK 21（兼容性更好）
+      - name: Set up JDK 21
         uses: actions/setup-java@v3
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
-      # 3. 构建APK（仅生成调试版）
-      - name: Build Debug APK
+      # 3. 设置Android SDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 4. 构建Release版本
+      - name: Build Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
-
-      # 4. 发布未签名APK
-      - name: Upload Debug APK
+          ./gradlew assembleRelease
+          
+      # 5. 获取构建信息
+      - name: Get build info
+        id: build-info
+        run: |
+          APK_PATH=$(find . -path '*/release/*.apk' | head -1)
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          echo "version=$(./gradlew -q printVersion)" >> $GITHUB_OUTPUT
+          
+      # 6. 发布到Releases
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: app/build/outputs/apk/debug/app-debug.apk
-          draft: false
+          tag_name: ${{ github.ref_name }}
+          release_name: "BiliRoamingX ${{ steps.build-info.outputs.version }}"
           body: |
-            ⚠️ 注意：这是由GitHubAction编译 并没受到官方认可 
-            - 原项目: BillRoamingX
-            - 构建日期: ${{ steps.date.outputs.date }}
+            ⚠️ 非官方构建警告 ⚠️
+            ======================
+            此版本由GitHub Actions自动构建，非官方发布版本！
+            
+            📅 构建日期: ${{ steps.get-date.outputs.date }}
+            🔖 提交哈希: ${{ github.sha }}
+            🏷️ 标签版本: ${{ github.ref_name }}
+            
+            ℹ️ 原项目地址: https://github.com/BiliRoamingX/BiliRoamingX
+          files: ${{ steps.build-info.outputs.apk_path }}
+          draft: false
+          prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 自动使用GitHub内置token
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 7. 获取当前日期
+      - name: Get current date
+        id: get-date
+        run: echo "date=$(date +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
